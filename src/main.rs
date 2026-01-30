@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -19,6 +19,10 @@ struct Args {
     /// Number of blocks to fetch
     #[arg(long)]
     block_count: u64,
+
+    /// Interval between sampled blocks
+    #[arg(long, default_value_t = 1)]
+    block_interval: u64,
 }
 
 #[derive(Serialize)]
@@ -91,14 +95,30 @@ async fn fetch_block(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    if std::env::args().len() == 1 {
+        let mut cmd = Args::command();
+        cmd.print_help()?;
+        println!();
+        return Ok(());
+    }
+
     let args = Args::parse();
     let client = reqwest::Client::new();
 
+    let mut previous_timestamp: Option<u64> = None;
     for offset in 0..args.block_count {
-        let block_number = args.start_block + offset;
+        let block_number = args.start_block + offset * args.block_interval;
         let info = fetch_block(&client, &args.rpc_url, block_number).await?;
-        println!("{},{},{}", info.number, info.timestamp, info.timestamp_utc);
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let delta = match previous_timestamp {
+            Some(prev) => info.timestamp.saturating_sub(prev).to_string(),
+            None => String::new(),
+        };
+        println!(
+            "{},{},{},{}",
+            info.number, info.timestamp, info.timestamp_utc, delta
+        );
+        previous_timestamp = Some(info.timestamp);
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 
     Ok(())
